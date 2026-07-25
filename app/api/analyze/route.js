@@ -1,44 +1,50 @@
+// app/api/generate/route.js
 import { NextResponse } from 'next/server';
+import { GoogleGenAI } from '@google/genai';
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export async function POST(req) {
   try {
-    const { syllabusText } = await req.json();
+    const { topic, type } = await req.json();
 
-    if (!syllabusText) {
-      return NextResponse.json({ error: 'Syllabus text is required.' }, { status: 400 });
+    if (!topic) {
+      return NextResponse.json({ error: 'Topic is required' }, { status: 400 });
     }
 
-    const systemPrompt = `You are an academic organization assistant. Analyze the syllabus text and extract all major assignments, exams, and projects.
-    Return STRICTLY valid JSON with no markdown block formatting or conversational text. 
-    Format as an array of objects:
-    [
-      {
-        "title": "Assignment or Exam Name",
-        "dueDate": "YYYY-MM-DD",
-        "weight": 20,
-        "description": "Brief summary",
-        "subtasks": ["Step 1", "Step 2", "Step 3"]
-      }
-    ]`;
+    let prompt = '';
+    
+    if (type === 'quiz') {
+      prompt = `Generate a 3-question multiple choice quiz on the topic: "${topic}".
+      Return ONLY a valid JSON array of objects with this structure:
+      [
+        {
+          "question": "string",
+          "options": ["string", "string", "string", "string"],
+          "answer": "correct option exact string"
+        }
+      ]`;
+    } else if (type === 'flashcards') {
+      prompt = `Generate 4 study flashcards on the topic: "${topic}".
+      Return ONLY a valid JSON array of objects with this structure:
+      [
+        { "front": "Concept/Question string", "back": "Detailed explanation string" }
+      ]`;
+    } else {
+      prompt = `Provide a concise 3-bullet summary explaining: "${topic}".
+      Return ONLY a valid JSON array of strings: ["bullet 1", "bullet 2", "bullet 3"]`;
+    }
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          { role: 'user', parts: [{ text: `${systemPrompt}\n\nSyllabus:\n${syllabusText}` }] }
-        ]
-      })
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { responseMimeType: 'application/json' },
     });
 
-    const data = await response.json();
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
-    
-    const cleanedText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsedJSON = JSON.parse(cleanedText);
-
-    return NextResponse.json({ result: parsedJSON });
+    const data = JSON.parse(response.text);
+    return NextResponse.json({ result: data });
   } catch (err) {
-    return NextResponse.json({ error: 'Failed to parse syllabus. Check format.' }, { status: 500 });
+    console.error('API Error:', err);
+    return NextResponse.json({ error: 'Failed to generate AI content' }, { status: 500 });
   }
 }
